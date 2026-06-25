@@ -165,37 +165,7 @@ def generate_article_with_llm(item):
 
     system_message = "あなたはネットで絶大な支持を集める「秘密の恋愛・大人の背徳ドラマ専門」のカリスマ熱血レビュアーです。規約に配慮しつつ極めて熱量の高いレビュー文をHTML形式で作成します。"
 
-    # 1. GitHub Models API (GITHUB_TOKENを使用) を最優先
-    github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if github_token:
-        try:
-            print("Attempting to generate article with GitHub Models API...")
-            headers = {
-                "Authorization": f"Bearer {github_token}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": system_message},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.8
-            }
-            response = requests.post("https://models.inference.ai.azure.com/chat/completions", headers=headers, json=payload, timeout=30)
-            if response.status_code == 200:
-                result_text = response.json()["choices"][0]["message"]["content"].strip()
-                if "```html" in result_text:
-                    result_text = result_text.split("```html", 1)[1]
-                if "```" in result_text:
-                    result_text = result_text.split("```")[0]
-                return result_text.strip()
-            else:
-                print(f"GitHub Models API returned status code: {response.status_code} - {response.text}")
-        except Exception as e:
-            print(f"GitHub Models API failed with exception: {e}")
-
-    # 2. Pollinations AI (キー不要、フォールバック)
+    # GitHub Models (Azure OpenAI) は安全管理ポリシーが厳しいため、コンテンツ制限のない Pollinations AI に一本化します
     pollinations_models = ["openai", "mistral"]
     for model in pollinations_models:
         try:
@@ -209,7 +179,7 @@ def generate_article_with_llm(item):
                     ],
                     "model": model
                 },
-                timeout=45
+                timeout=25
             )
             if response.status_code == 200 and len(response.text.strip()) > 100:
                 result_text = response.text.strip()
@@ -218,6 +188,8 @@ def generate_article_with_llm(item):
                 if "```" in result_text:
                     result_text = result_text.split("```", 1)[0]
                 return result_text.strip()
+            else:
+                print(f"Pollinations AI ({model}) returned status code: {response.status_code} - {response.text[:200]}")
         except Exception as e:
             print(f"Pollinations AI ({model}) failed with exception: {e}")
             time.sleep(1)
