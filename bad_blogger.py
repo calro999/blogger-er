@@ -40,29 +40,37 @@ def fetch_fanza_item():
     if not api_id or not affiliate_id:
         raise ValueError("FANZA_API_ID and FANZA_AFFILIATE_ID must be set in environment variables.")
 
-    # API IDやアフィリエイトIDに誤ってURL等が含まれている場合の厳密な抽出処理
+    # URL全体が入っている場合、クエリパラメータから抽出を試みる（デコード前に行う）
     import re
     import urllib.parse
 
-    # URLデコードしてアンパサンドなどのエスケープをあらかじめ解除
-    api_id = urllib.parse.unquote(api_id).strip()
-    affiliate_id = urllib.parse.unquote(affiliate_id).strip()
-
-    # URL全体が入っている場合、クエリパラメータから抽出を試みる
+    # api_idのパース
     if "api_id=" in api_id:
         match = re.search(r"[?&]api_id=([^&]+)", api_id)
         if match:
             api_id = match.group(1)
 
+    # affiliate_idのパース (api_idの中にURLとしてaffiliate_idが含まれている場合も考慮)
     if "affiliate_id=" in affiliate_id:
         match = re.search(r"[?&]affiliate_id=([^&]+)", affiliate_id)
         if match:
             affiliate_id = match.group(1)
+    elif "affiliate_id=" in api_id:
+        # FANZA_API_IDのURL内に含まれるaffiliate_idを予備的に検索
+        match = re.search(r"[?&]affiliate_id=([^&]+)", api_id)
+        if match:
+            affiliate_id = match.group(1)
 
-    # DMM API IDは英数字で構成されているため、記号などを除去
+    # URLデコードしてアンパサンドなどのエスケープを解除
+    api_id = urllib.parse.unquote(api_id).strip()
+    affiliate_id = urllib.parse.unquote(affiliate_id).strip()
+
+    # 余計な末尾のブラケットや特殊記号（], ), > など）や空白を完全に排除
     api_id = re.sub(r"[^a-zA-Z0-9_-]", "", api_id).strip()
-    # アフィリエイトIDも同様に英数字とハイフンのみにする（コピペ時の ] などを排除）
     affiliate_id = re.sub(r"[^a-zA-Z0-9-]", "", affiliate_id).strip()
+
+    print(f"[DEBUG] Final parsed API ID: {api_id}")
+    print(f"[DEBUG] Final parsed Affiliate ID: {affiliate_id}")
 
     # 背徳系キーワードリスト
     keywords = ["人妻 ネトラレ", "熟女 不倫", "団地妻 背徳"]
