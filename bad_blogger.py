@@ -1,0 +1,427 @@
+import os
+import random
+import requests
+import time
+import base64
+import json
+import tempfile
+from playwright.sync_api import sync_playwright
+
+CACHE_FILE = "posted_cache.txt"
+
+
+def click_physical(page, selector):
+    elements = page.locator(selector).all()
+    for el in elements:
+        try:
+            box = el.bounding_box()
+            if box and box['width'] > 0 and box['height'] > 0:
+                x = box['x'] + box['width'] / 2
+                y = box['y'] + box['height'] / 2
+                page.mouse.click(x, y)
+                return True
+        except:
+            pass
+    return False
+
+def load_posted_cache():
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
+
+def save_to_cache(content_id):
+    with open(CACHE_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{content_id}\n")
+
+def fetch_fanza_item():
+    api_id = os.environ.get("FANZA_API_ID")
+    affiliate_id = os.environ.get("FANZA_AFFILIATE_ID")
+    if not api_id or not affiliate_id:
+        raise ValueError("FANZA_API_ID and FANZA_AFFILIATE_ID must be set in environment variables.")
+
+    # 背徳系キーワードリスト
+    keywords = ["人妻 ネトラレ", "熟女 不倫", "団地妻 背徳"]
+    selected_keyword = random.choice(keywords)
+    print(f"Searching FANZA for keyword: {selected_keyword}")
+
+    url = "https://api.dmm.com/affiliate/v3/ItemList"
+    params = {
+        "api_id": api_id,
+        "affiliate_id": affiliate_id,
+        "site": "FANZA",
+        "service": "digital",
+        "floor": "videoa",
+        "keyword": selected_keyword,
+        "sort": random.choice(["date", "rank"]),
+        "hits": 10,
+        "output": "json"
+    }
+
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        raise RuntimeError(f"Failed to fetch from FANZA API: {response.status_code} - {response.text}")
+
+    data = response.json()
+    items = data.get("result", {}).get("items", [])
+    if not items:
+        raise RuntimeError(f"No items found for keyword: {selected_keyword}")
+
+    posted_cache = load_posted_cache()
+    for item in items:
+        content_id = item.get("content_id")
+        if content_id and content_id not in posted_cache:
+            return item
+
+    raise RuntimeError("All fetched FANZA items have already been posted.")
+
+def generate_article_with_llm(item):
+    title = item.get("title")
+    comment = item.get("comment", "")
+    genres = ", ".join([g.get("name", "") for g in item.get("iteminfo", {}).get("genre", [])])
+    affiliate_url = item.get("affiliateURL")
+    
+    # 画像URLの取得
+    image_url = ""
+    images = item.get("imageURL", {})
+    if images:
+        image_url = images.get("large") or images.get("list") or ""
+
+    prompt = f"""以下のFANZA商品情報を基にして、指定の執筆ルールに従ってブログ記事のHTML本文（レビュー文）を生成してください。
+
+【作品名】: {title}
+【あらすじ】: {comment}
+【ジャンル】: {genres}
+
+【執筆ルール】
+1. ペルソナ: ネットで絶大な支持を集める「人妻・不倫・ネトラレ系AV専門」のカリスマ熱血レビュアー。圧倒的な文章の熱量で語ってください。
+2. 感情的なキャッチコピー: 冒頭に作品の「背徳的なシチュエーションのヤバさ」を突いた見出し（<h3>）を配置してください。
+3. マニア目線の心理描写: 公式のあらすじをなぞるのではなく、「登場人物の罪悪感の表情」「日常が崩壊していく背徳感」など、マニアが熱弁している風のストーリー・心理・情景の推しポイントを熱量MAXで書いてください。
+4. ロングテールSEOの埋め込み: 記事内に自然な形で「主婦」「不倫」「旦那の留守中」「寝取られ」などの関連サジェストワードを散りばめてください。
+5. 表現の防壁: 直接的な性描写（ポルノワード）を避けつつ、官能的で妄想を刺激する文学的表現（例：「禁断の領域」「蜜月」「背徳の泥沼」）に変換してください。
+6. 出力フォーマット: Bloggerにそのまま流し込めるように、本文のみをHTML（<p>, <h3>, <strong>）で出力し、マークダウンのコードブロック（```html や ```）は一切出力しないでください。
+
+それでは、HTML本文のみを出力してください。
+"""
+
+    system_message = "あなたはネットで絶大な支持を集める「人妻・不倫・ネトラレ系AV専門」のカリスマ熱血レビュアーです。規約に配慮しつつ極めて熱量の高いレビュー文をHTML形式で作成します。"
+
+    # 1. GitHub Models API (GITHUB_TOKENを使用) を最優先
+    github_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if github_token:
+        try:
+            print("Attempting to generate article with GitHub Models API...")
+            headers = {
+                "Authorization": f"Bearer {github_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.8
+            }
+            response = requests.post("https://models.inference.ai.azure.com/chat/completions", headers=headers, json=payload, timeout=30)
+            if response.status_code == 200:
+                result_text = response.json()["choices"][0]["message"]["content"].strip()
+                if "```html" in result_text:
+                    result_text = result_text.split("```html", 1)[1]
+                if "```" in result_text:
+                    result_text = result_text.split("```")[0]
+                return result_text.strip()
+            else:
+                print(f"GitHub Models API returned status code: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"GitHub Models API failed with exception: {e}")
+
+    # 2. Pollinations AI (キー不要、フォールバック)
+    pollinations_models = ["openai", "mistral"]
+    for model in pollinations_models:
+        try:
+            print(f"Attempting to generate article with Pollinations AI (model: {model})...")
+            response = requests.post(
+                "https://text.pollinations.ai/",
+                json={
+                    "messages": [
+                        {"role": "system", "content": system_message},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "model": model
+                },
+                timeout=45
+            )
+            if response.status_code == 200 and len(response.text.strip()) > 100:
+                result_text = response.text.strip()
+                if "```html" in result_text:
+                    result_text = result_text.split("```html", 1)[1]
+                if "```" in result_text:
+                    result_text = result_text.split("```", 1)[0]
+                return result_text.strip()
+        except Exception as e:
+            print(f"Pollinations AI ({model}) failed with exception: {e}")
+            time.sleep(1)
+
+    raise RuntimeError("All LLM generation attempts failed.")
+
+def post_to_blogger(title, content, labels):
+    blog_id = os.environ.get("BLOGGER_BLOG_ID")
+    if not blog_id:
+        raise ValueError("BLOGGER_BLOG_ID is not set in environment variables.")
+    session_b64 = os.environ.get("BLOGGER_SESSION_B64")
+    
+    session_file_path = None
+    if session_b64:
+        try:
+            decoded_str = base64.b64decode(session_b64).decode('utf-8')
+            json.loads(decoded_str)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, suffix=".json") as temp_file:
+                temp_file.write(decoded_str)
+                session_file_path = temp_file.name
+        except Exception as e:
+            raise ValueError(f"BLOGGER_SESSION_B64 のデコードに失敗しました: {e}")
+    elif os.path.exists("session.json"):
+        print("Found local session.json. Using it for Blog Post.")
+        session_file_path = "session.json"
+    else:
+        raise ValueError(f"BLOGGER_SESSION_B64 is not set and local session.json not found.")
+
+    print(f"Posting to Blogger (Blog ID: {blog_id}) using Playwright...")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"]
+            )
+            context = browser.new_context(
+                storage_state=session_file_path,
+                viewport={"width": 1280, "height": 800},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                permissions=['clipboard-read', 'clipboard-write']
+            )
+            page = context.new_page()
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+            try:
+                time.sleep(random.uniform(3.0, 5.0))
+
+                page.goto(f"https://draft.blogger.com/blog/post/edit/{blog_id}/new", wait_until="networkidle")
+                time.sleep(random.uniform(3.0, 5.0))
+                
+                if "edit" not in page.url:
+                    page.keyboard.press('c')
+                    time.sleep(random.uniform(3.0, 5.0))
+                
+                if "edit" not in page.url:
+                    page.evaluate('''() => {
+                        const btns = Array.from(document.querySelectorAll('div[role="button"]'));
+                        const newPostBtn = btns.find(b => (b.getAttribute('aria-label') || '').includes('新しい投稿') || (b.getAttribute('aria-label') || '').includes('New post'));
+                        if (newPostBtn) newPostBtn.click();
+                    }''')
+                    time.sleep(random.uniform(3.0, 5.0))
+
+                # 1. タイトル入力
+                title_input = page.locator('.titleField input, input[aria-label*="Title"], input[aria-label*="タイトル"]').first
+                title_input.wait_for(state="visible", timeout=30000)
+                title_input.click()
+                time.sleep(0.5)
+                page.keyboard.press('Meta+A')
+                page.keyboard.press('Control+A')
+                page.keyboard.press('Backspace')
+                
+                max_retries = 3
+                success = False
+                
+                for attempt in range(max_retries):
+                    print(f"--- Attempt {attempt+1} / {max_retries} ---")
+                    
+                    if attempt > 0:
+                        print("Reloading page for retry...")
+                        page.reload(wait_until="domcontentloaded")
+                        time.sleep(3)
+                    
+                    try:
+                        title_input = page.locator('input.titleField, input[aria-label="タイトル"], input[aria-label="Title"]').locator("visible=true").first
+                        title_input.fill(title)
+                        time.sleep(2)
+                        
+                        print("Focusing on the rich text editor via Tab navigation...")
+                        page.keyboard.press('Tab')
+                        time.sleep(0.5)
+                        page.keyboard.press('Tab')
+                        time.sleep(1)
+                        
+                        try:
+                            editor_body = page.locator('div[aria-label="本文"], div[aria-label="Body"], div[role="textbox"], iframe').locator("visible=true").first
+                            editor_body.click(timeout=3000)
+                        except:
+                            pass
+                            
+                        print("Injecting HTML via Playwright clipboard paste...")
+                        page.evaluate('''html => {
+                            try {
+                                const blob = new Blob([html], { type: 'text/html' });
+                                const data = [new ClipboardItem({ 'text/html': blob })];
+                                navigator.clipboard.write(data);
+                            } catch (e) {
+                                console.error('Clipboard write failed:', e);
+                            }
+                        }''', content)
+                        time.sleep(2)
+                        
+                        page.keyboard.press('Control+V')
+                        page.keyboard.press('Meta+V')
+                        time.sleep(2)
+                        
+                        page.keyboard.press('Space')
+                        time.sleep(0.5)
+                        page.keyboard.press('Backspace')
+                        time.sleep(3)
+                        
+                        print("Validating injected content...")
+                        page_html = page.content()
+                        
+                        if "<img" in page_html and ("href" in page_html or "http" in page_html):
+                            print("Validation passed: Body content successfully detected in page!")
+                            success = True
+                            break
+                        else:
+                            print("Validation failed: Body seems empty or missing images.")
+                            
+                    except Exception as e:
+                        print(f"Error during injection attempt {attempt+1}: {e}")
+                        
+                    time.sleep(3)
+                
+                if not success:
+                    raise Exception("Critical Failure: Could not inject body content.")
+
+                # ラベル（タグ）の追加
+                try:
+                    print("Adding labels...")
+                    # ラベル入力フィールドのプレースホルダーやaria-labelにマッチさせる
+                    label_input = page.locator('input[aria-label*="ラベル"], input[aria-label*="Label"], input[placeholder*="ラベル"]').first
+                    if label_input.is_visible():
+                        label_input.click()
+                        time.sleep(0.5)
+                        labels_str = ",".join(labels)
+                        label_input.fill(labels_str)
+                        page.keyboard.press('Enter')
+                        print(f"Labels added: {labels_str}")
+                        time.sleep(2)
+                except Exception as label_err:
+                    print(f"Failed to add labels: {label_err}")
+
+                # 3. 公開ボタンのクリック
+                print("Publishing post...")
+                try:
+                    pub_btn = page.locator('[aria-label="公開"], [aria-label="Publish"]').locator("visible=true").first
+                    pub_btn.scroll_into_view_if_needed()
+                    time.sleep(1)
+                    pub_btn.click(force=True, timeout=10000)
+                    print("Clicked publish button.")
+                except Exception as e:
+                    print("Failed to click publish button:", e)
+                    page.keyboard.press('Control+Shift+P')
+                    page.keyboard.press('Meta+Shift+P')
+                
+                time.sleep(4)
+
+                # 4. 確認ダイアログの「確認」ボタン
+                try:
+                    conf_btn = page.locator('[aria-label="確認"], [aria-label="Confirm"], div[role="button"]:has-text("確認")').locator("visible=true").first
+                    conf_btn.scroll_into_view_if_needed()
+                    time.sleep(1)
+                    conf_btn.click(force=True, timeout=10000)
+                    print("Clicked confirm button.")
+                except Exception as e:
+                    print("Failed to click confirm button:", e)
+                    page.keyboard.press('Enter')
+                
+                time.sleep(10)
+                print("Successfully published post using Playwright!")
+            except Exception as e:
+                print(f"Error occurred. Current URL: {page.url}")
+                raise e
+
+    finally:
+        if session_file_path and session_file_path != "session.json" and os.path.exists(session_file_path):
+            os.remove(session_file_path)
+
+
+def main():
+    try:
+        # 1. FANZAから商品取得
+        item = fetch_fanza_item()
+        content_id = item.get("content_id")
+        title = item.get("title")
+        affiliate_url = item.get("affiliateURL")
+        print(f"Selected FANZA Item: {title} ({content_id})")
+
+        # 画像URL
+        image_url = ""
+        images = item.get("imageURL", {})
+        if images:
+            image_url = images.get("large") or images.get("list") or ""
+
+        # 2. LLMでレビュー文HTML生成
+        review_html = generate_article_with_llm(item)
+        
+        # 3. 指定レイアウトHTMLとガッチャンコする
+        # CTAボタン用のグラデーションCSS付きリンク
+        cta_button_html = f"""
+        <div style="text-align: center; margin: 40px 0;">
+            <a href="{affiliate_url}" target="_blank" rel="noopener noreferrer" style="
+                display: inline-block;
+                padding: 18px 36px;
+                font-size: 20px;
+                font-weight: bold;
+                color: #ffffff;
+                background: linear-gradient(45deg, #ff416c, #ff4b2b);
+                text-decoration: none;
+                border-radius: 50px;
+                box-shadow: 0 4px 15px rgba(255, 75, 43, 0.4);
+                transition: transform 0.2s;
+            ">
+                🔥 今すぐこの作品を視聴する！
+            </a>
+        </div>
+        """
+        
+        full_html = f"""
+        <div class="fanza-review-post" style="font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.8; color: #333;">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <a href="{affiliate_url}" target="_blank" rel="noopener noreferrer">
+                    <img src="{image_url}" alt="{title}" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);" />
+                </a>
+            </div>
+            
+            <div class="review-body" style="font-size: 16px; margin-bottom: 30px;">
+                {review_html}
+            </div>
+            
+            {cta_button_html}
+        </div>
+        """
+
+        gen_title = f"【超ド級の背徳感】 {title}"
+        labels = ["FANZA新作", "人妻", "ネトラレ", "背徳不倫"]
+        
+        print("--- Generated HTML Content Snippet ---")
+        print(full_html[:300])
+        print("--------------------------------------")
+        
+        post_to_blogger(gen_title, full_html, labels)
+
+        # 4. キャッシュに保存
+        save_to_cache(content_id)
+        print("Process completed successfully.")
+
+    except Exception as e:
+        print(f"Error in execution: {e}")
+        exit(1)
+
+if __name__ == "__main__":
+    main()
