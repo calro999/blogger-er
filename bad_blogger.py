@@ -42,7 +42,6 @@ def fetch_fanza_item():
 
     # API IDに誤ってURL等が混入している場合のトリミング処理
     if "api_id=" in api_id:
-        # 例: https://api.dmm.com/affiliate/v3/ItemList?api_id=XXXX&...
         parts = api_id.split("api_id=")
         if len(parts) > 1:
             api_id = parts[1].split("&")[0]
@@ -53,9 +52,10 @@ def fetch_fanza_item():
         if len(parts) > 1:
             affiliate_id = parts[1].split("&")[0]
 
-    # 不要な改行やスペースを除去
-    api_id = api_id.strip()
-    affiliate_id = affiliate_id.strip()
+    # URLデコードを行い、アンパサンドなどのエスケープを除去する
+    import urllib.parse
+    api_id = urllib.parse.unquote(api_id).strip()
+    affiliate_id = urllib.parse.unquote(affiliate_id).strip()
 
     # 背徳系キーワードリスト
     keywords = ["人妻 ネトラレ", "熟女 不倫", "団地妻 背徳"]
