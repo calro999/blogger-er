@@ -40,6 +40,23 @@ def fetch_fanza_item():
     if not api_id or not affiliate_id:
         raise ValueError("FANZA_API_ID and FANZA_AFFILIATE_ID must be set in environment variables.")
 
+    # API IDに誤ってURL等が混入している場合のトリミング処理
+    if "api_id=" in api_id:
+        # 例: https://api.dmm.com/affiliate/v3/ItemList?api_id=XXXX&...
+        parts = api_id.split("api_id=")
+        if len(parts) > 1:
+            api_id = parts[1].split("&")[0]
+    
+    # アフィリエイトIDに誤ってURL等が混入している場合のトリミング処理
+    if "affiliate_id=" in affiliate_id:
+        parts = affiliate_id.split("affiliate_id=")
+        if len(parts) > 1:
+            affiliate_id = parts[1].split("&")[0]
+
+    # 不要な改行やスペースを除去
+    api_id = api_id.strip()
+    affiliate_id = affiliate_id.strip()
+
     # 背徳系キーワードリスト
     keywords = ["人妻 ネトラレ", "熟女 不倫", "団地妻 背徳"]
     selected_keyword = random.choice(keywords)
