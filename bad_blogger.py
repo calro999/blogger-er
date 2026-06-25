@@ -392,7 +392,17 @@ def main():
         content_id = item.get("content_id")
         title = item.get("title")
         affiliate_url = item.get("affiliateURL")
+        # リンク用のアフィリエイトIDはonchan555-003にするため、取得したURLのaf_idパラメータ部分を書き換える
+        if affiliate_url:
+            # af_id=onchan555-999 (あるいはAPI用ID) の箇所を強制的に onchan555-003 に書き換え
+            affiliate_url = affiliate_url.replace("af_id=onchan555-999", "af_id=onchan555-003")
+            # 汎用的に環境変数で指定された値から書き換えるフォールバック
+            api_aff_id = os.environ.get("FANZA_AFFILIATE_ID")
+            if api_aff_id and api_aff_id != "onchan555-003":
+                affiliate_url = affiliate_url.replace(f"af_id={api_aff_id}", "af_id=onchan555-003")
+
         print(f"Selected FANZA Item: {title} ({content_id})")
+        print(f"[DEBUG] Replaced Link Affiliate URL: {affiliate_url}")
 
         # 画像URL
         image_url = ""
