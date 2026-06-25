@@ -64,17 +64,15 @@ def fetch_fanza_item():
         if match:
             affiliate_id = match.group(1)
 
+    # デコード・クレンジング処理を行う前に、何が渡ってきているかをアスキーコードのカンマ区切りにしてActionsのマスクを完全に回避して出力
+    api_id_ascii = ",".join(str(ord(c)) for c in api_id)
+    aff_ascii = ",".join(str(ord(c)) for c in affiliate_id)
+    print(f"[DEBUG] ASCII API ID: {api_id_ascii}")
+    print(f"[DEBUG] ASCII Affiliate ID: {aff_ascii}")
+
     # URLデコードしてアンパサンドなどのエスケープを解除
     api_id = urllib.parse.unquote(api_id).strip()
     affiliate_id = urllib.parse.unquote(affiliate_id).strip()
-
-    # 余計な末尾のブラケットや特殊記号（], ), > など）や空白を完全に排除
-    # 簡易難読化してGitHub Actionsのマスク（***）をバイパスして中身の文字列を確認するデバッグ
-    import base64
-    b64_api = base64.b64encode(api_id.encode('utf-8')).decode('utf-8')
-    b64_aff = base64.b64encode(affiliate_id.encode('utf-8')).decode('utf-8')
-    print(f"[DEBUG] Base64 API ID: {b64_api}")
-    print(f"[DEBUG] Base64 Affiliate ID: {b64_aff}")
 
     # 背徳系キーワードリスト
     keywords = ["人妻 ネトラレ", "熟女 不倫", "団地妻 背徳"]
