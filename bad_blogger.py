@@ -44,20 +44,23 @@ def fetch_fanza_item():
     import re
     import urllib.parse
 
+    raw_api_id = api_id
+    raw_affiliate_id = affiliate_id
+
     # api_idのパース
-    if "api_id=" in api_id:
-        match = re.search(r"[?&]api_id=([^&]+)", api_id)
+    if "api_id=" in raw_api_id:
+        match = re.search(r"[?&]api_id=([^&]+)", raw_api_id)
         if match:
             api_id = match.group(1)
 
-    # affiliate_idのパース (api_idの中にURLとしてaffiliate_idが含まれている場合も考慮)
-    if "affiliate_id=" in affiliate_id:
-        match = re.search(r"[?&]affiliate_id=([^&]+)", affiliate_id)
+    # affiliate_idのパース
+    if "affiliate_id=" in raw_affiliate_id:
+        match = re.search(r"[?&]affiliate_id=([^&]+)", raw_affiliate_id)
         if match:
             affiliate_id = match.group(1)
-    elif "affiliate_id=" in api_id:
+    elif "affiliate_id=" in raw_api_id:
         # FANZA_API_IDのURL内に含まれるaffiliate_idを予備的に検索
-        match = re.search(r"[?&]affiliate_id=([^&]+)", api_id)
+        match = re.search(r"[?&]affiliate_id=([^&]+)", raw_api_id)
         if match:
             affiliate_id = match.group(1)
 
